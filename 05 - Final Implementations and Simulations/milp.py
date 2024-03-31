@@ -1,12 +1,5 @@
 import pandas as pd
 import numpy as np
-import plotnine as pn
-import plotly.graph_objs as go
-import plotly.express as px
-from tqdm.notebook import tqdm
-from IPython.display import clear_output, display
-import os
-from itertools import product
 from pulp import (
     LpMaximize,
     LpMinimize,
@@ -18,7 +11,6 @@ from pulp import (
     LpInteger,
     value,
 )
-from itertools import product
 
 
 class MILP:
