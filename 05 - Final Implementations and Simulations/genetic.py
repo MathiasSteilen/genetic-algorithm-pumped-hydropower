@@ -151,7 +151,7 @@ class GA_Actions_Tournament:
 
             if tune_mode:
                 # Report average fitness to Ray Tune
-                train.report({"fitness": np.mean(fitnesses)})
+                train.report({"fitness": np.max(fitnesses)})
 
             # Increment counter
             generation += 1
@@ -406,7 +406,7 @@ class GA_Actions_Elite:
 
             if tune_mode:
                 # Report average fitness to Ray Tune
-                train.report({"fitness": np.mean(fitnesses)})
+                train.report({"fitness": np.max(fitnesses)})
 
             # Increment counter
             generation += 1
