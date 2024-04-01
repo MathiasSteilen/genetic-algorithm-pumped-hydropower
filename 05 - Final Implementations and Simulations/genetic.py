@@ -62,17 +62,18 @@ class GA_Actions_Tournament:
             up=1,
             # Non linear mutation rate decay
             indpb=CallbackProxy(
-                lambda: np.max(
-                    [
-                        np.exp(
-                            (
-                                np.log(config["FINAL_MUTATION_RATE"])
-                                - np.log(config["INITIAL_MUTATION_RATE"])
-                            )
-                            / (0.8 * total_generations)
-                        ),
-                        config["FINAL_MUTATION_RATE"],
-                    ]
+                lambda: np.where(
+                    generation <= int(0.8 * total_generations),
+                    config["INITIAL_MUTATION_RATE"]
+                    * np.exp(
+                        (
+                            np.log(config["FINAL_MUTATION_RATE"])
+                            - np.log(config["INITIAL_MUTATION_RATE"])
+                        )
+                        / (0.8 * total_generations)
+                    )
+                    ** generation,
+                    config["FINAL_MUTATION_RATE"],
                 )
             ),
         )
@@ -150,7 +151,7 @@ class GA_Actions_Tournament:
 
             if tune_mode:
                 # Report average fitness to Ray Tune
-                train.report({"fitness": np.max(fitnesses)})
+                train.report({"fitness": np.mean(fitnesses)})
 
             # Increment counter
             generation += 1
@@ -184,6 +185,7 @@ class GA_Actions_Tournament:
             ),
             config=tune_config,
             metric="fitness",
+            mode="max",
             local_dir="tune_results",
             name="GA",
             search_alg=OptunaSearch(),
@@ -286,17 +288,18 @@ class GA_Actions_Elite:
             up=1,
             # Non linear mutation rate decay
             indpb=CallbackProxy(
-                lambda: np.max(
-                    [
-                        np.exp(
-                            (
-                                np.log(config["FINAL_MUTATION_RATE"])
-                                - np.log(config["INITIAL_MUTATION_RATE"])
-                            )
-                            / (0.8 * total_generations)
-                        ),
-                        config["FINAL_MUTATION_RATE"],
-                    ]
+                lambda: np.where(
+                    generation <= int(0.8 * total_generations),
+                    config["INITIAL_MUTATION_RATE"]
+                    * np.exp(
+                        (
+                            np.log(config["FINAL_MUTATION_RATE"])
+                            - np.log(config["INITIAL_MUTATION_RATE"])
+                        )
+                        / (0.8 * total_generations)
+                    )
+                    ** generation,
+                    config["FINAL_MUTATION_RATE"],
                 )
             ),
         )
@@ -337,7 +340,7 @@ class GA_Actions_Elite:
             if int(np.round(min_fitness)) == int(np.round(max_fitness)):
                 # If all fitnesses are equal, set weighting to uniform distribution
                 fitnesses_weighting = np.full_like(
-                    np.arange(0, len(selected)), 1 / len(selected)
+                    np.arange(0, len(selected)), 1 / len(selected), dtype=float
                 )
                 fitnesses_weighting /= fitnesses_weighting.sum()
             else:
@@ -345,6 +348,7 @@ class GA_Actions_Elite:
                     max_fitness - min_fitness
                 )
                 fitnesses_weighting /= fitnesses_weighting.sum()
+
             # print(f"Std dev weighting: {np.std(fitnesses_weighting)}")
             # print(f"Weighting list length: {len(fitnesses_weighting)}")
 
@@ -402,7 +406,7 @@ class GA_Actions_Elite:
 
             if tune_mode:
                 # Report average fitness to Ray Tune
-                train.report({"fitness": np.max(fitnesses)})
+                train.report({"fitness": np.mean(fitnesses)})
 
             # Increment counter
             generation += 1
