@@ -5,26 +5,30 @@ import numpy as np
 from tqdm.notebook import tqdm
 import os
 from deap import base, creator, tools, algorithms
+import ray
 from ray import train, tune
 from ray.tune.search.optuna import OptunaSearch
 from ray.tune.schedulers import ASHAScheduler
+from pathlib import Path
 
 
 class GA_Actions:
-    def __init__(self, spot, utc_time, plant_params, indiviual_size):
+    def __init__(self, plant_params, spot, utc_time):
+        self.plant_params = plant_params
         self.spot = spot
         self.utc_time = utc_time
-        self.plant_params = plant_params
-        self.individual_size = indiviual_size
+        self.individual_size = len(spot)
 
-    def train(self, config, total_generations, tune_mode=False):
-        TOTAL_GENERATIONS = total_generations
-        INDIVIDUAL_SIZE = self.individual_size
-                
+    def train(
+        self,
+        config,
+        total_generations,
+        tune_mode: bool,
+    ):
         # Objective Direction
         creator.create("FitnessMax", base.Fitness, weights=(1.0,))
 
-        # Invidiaul Structure
+        # Invididual Structure
         creator.create("Individual", list, fitness=creator.FitnessMax)
 
         # Initialise the toolbox
@@ -39,7 +43,7 @@ class GA_Actions:
             tools.initRepeat,
             creator.Individual,
             toolbox.attr_action,
-            INDIVIDUAL_SIZE,
+            self.individual_size,
         )
         toolbox.register("population", tools.initRepeat, list, toolbox.individual)
 
@@ -48,25 +52,31 @@ class GA_Actions:
         toolbox.register("mate", tools.cxOnePoint)
         toolbox.register(
             "mutate",
-            tools.mutUniformInt, 
-            low=-1, 
+            tools.mutUniformInt,
+            low=-1,
             up=1,
             indpb=config["MUT_IND_PB"],
         )
+        toolbox.register(
+            "select", tools.selTournament, tournsize=config["TOURNAMENT_SIZE"]
+        )
 
-        toolbox.register("select", tools.selTournament, tournsize=config["TOURNAMENT_SIZE"])
-
-        # Creating the initial
+        # Initialise the population
         population = toolbox.population(n=config["POP_SIZE"])
 
-        # Begin the evolution
-        best_fitnesses = []
-        avg_fitnesses = []
-        worst_fitnesses = []
-        best_ind = None
-        best_fitness = None
+        if not tune_mode:
+            # Initialise lists for storing intermediate values
+            best_fitnesses = []
+            avg_fitnesses = []
+            worst_fitnesses = []
+            best_ind = None
+            best_fitness = None
 
-        for generation in tqdm(range(TOTAL_GENERATIONS)):
+        # Initialise generation counter
+        generation = 0
+
+        # Launch the actual evolution loop over total_generations
+        for generation in tqdm(range(total_generations), disable=tune_mode):
             # Select the next generation individuals
             offspring = toolbox.select(population, len(population))
 
@@ -79,7 +89,7 @@ class GA_Actions:
                     toolbox.mate(child1, child2)
                     del child1.fitness.values
                     del child2.fitness.values
-            
+
             for mutant in offspring:
                 if np.random.random() < config["MUTPB"]:
                     toolbox.mutate(mutant)
@@ -95,51 +105,55 @@ class GA_Actions:
             # Overwrite the current population with the offspring
             population[:] = offspring
 
-            # Increment counter
-            generation += 1
-
             # Get fitnesses
             fitnesses = [ind.fitness.values[0] for ind in population]
-            
-            # Append the plot information
-            best_fitnesses.append(np.max(fitnesses))
-            avg_fitnesses.append(np.mean(fitnesses))
-            worst_fitnesses.append(np.min(fitnesses))
 
-            # Get the best individual
-            if best_fitness is None or np.max(fitnesses) > best_fitness:
-                best_fitness = np.max(fitnesses)
-                best_ind = population[fitnesses.index(np.max(fitnesses))]
-            
-            # If tune mode is activated, don't return anything, only report
-            # the performance to ray tune
+            if not tune_mode:
+                # Append the plot information
+                best_fitnesses.append(np.max(fitnesses))
+                avg_fitnesses.append(np.mean(fitnesses))
+                worst_fitnesses.append(np.min(fitnesses))
+
+                # Get the best individual
+                if best_fitness is None or np.max(fitnesses) > best_fitness:
+                    best_fitness = np.max(fitnesses)
+                    best_ind = population[fitnesses.index(np.max(fitnesses))]
+
             if tune_mode:
                 # Report average fitness to Ray Tune
                 train.report({"avg_fitness": np.mean(fitnesses)})
-        
-        # if tune mode is not active, return the desired values
+
+            # Increment counter
+            generation += 1
+
         if not tune_mode:
-            history = pd.DataFrame({
-                "generation": np.arange(0, len(best_fitnesses)),
-                "best": best_fitnesses,
-                "average": avg_fitnesses,
-                "worst": worst_fitnesses,
-            })
+            history = pd.DataFrame(
+                {
+                    "generation": np.arange(0, len(best_fitnesses)),
+                    "best": best_fitnesses,
+                    "average": avg_fitnesses,
+                    "worst": worst_fitnesses,
+                }
+            )
+            return population, fitnesses, best_ind, history
 
-            return best_ind, best_fitness, history
-                
+    def tune(
+        self,
+        tune_config,
+        total_generations,
+        timeout_s,
+    ):
 
-    def tune(self, tune_runs, total_generations, mode="max"):
+        # Need this line for locally defined modules to work with ray
+        ray.init(runtime_env={"working_dir": "."}, ignore_reinit_error=True)
 
         analysis = tune.run(
-            tune.with_parameters(self.train, total_generations=total_generations, tune_mode=True),
-            config={
-                "CXPB": tune.uniform(0.2, 0.8),
-                "MUTPB": tune.uniform(0.05, 0.95),
-                "MUT_IND_PB": tune.uniform(0.05, 0.95),
-                "TOURNAMENT_SIZE": tune.randint(1, 10),
-                "POP_SIZE": tune.choice([50, 250, 500, 1000, 5000]),
-            },
+            tune.with_parameters(
+                    self.train,
+                    total_generations=total_generations,
+                    tune_mode=True,
+                ),
+            config=tune_config,
             metric="avg_fitness",
             mode="max",
             local_dir="tune_results",
@@ -147,10 +161,11 @@ class GA_Actions:
             search_alg=OptunaSearch(),
             scheduler=ASHAScheduler(
                 time_attr="training_iteration",
-                grace_period=total_generations/2,
-                reduction_factor=1.5
+                grace_period=total_generations / 2,
+                reduction_factor=1.5,
             ),
-            num_samples=tune_runs,
+            time_budget_s=timeout_s,
+            num_samples=-1,
             trial_dirname_creator=lambda trial: f"{trial.trainable_name}_{trial.trial_id}",
         )
 
@@ -165,8 +180,8 @@ class GA_Actions:
                 np.array(individual) == 1,
             ],
             choicelist=[
-                -self.plant_params["PUMP_POWER_MW"] * df["spot"],
-                self.plant_params["TURBINE_POWER_MW"] * df["spot"],
+                -self.plant_params["PUMP_POWER_MW"] * self.spot,
+                self.plant_params["TURBINE_POWER_MW"] * self.spot,
             ],
             default=0,
         )
@@ -193,44 +208,31 @@ class GA_Actions:
             return (revenues.sum() - 1e7,)
         else:
             return (revenues.sum(),)
-        
-if __name__ == "__main__":
-    os.chdir(r"C:\Users\mathi\OneDrive\Universitaet\2nd Semester\5_Supervised Research\genetic-algorithm-pumped-hydropower\05 - Final Implementations and Simulations")
-    df = pd.read_csv("../01 - Data/example_week.csv")
-    plant_params = {
-        "EFFICIENCY": 0.75,
-        "MAX_STORAGE_M3": 5000,
-        "MIN_STORAGE_M3": 0,
-        "TURBINE_POWER_MW": 100,
-        "PUMP_POWER_MW": 100,
-        "TURBINE_RATE_M3H": 500,
-        "MIN_STORAGE_MWH": 0,
-        "INITIAL_WATER_LEVEL_PCT": 0,
-    }
-    plant_params["INITIAL_WATER_LEVEL"] = (
-        plant_params["INITIAL_WATER_LEVEL_PCT"] * plant_params["MAX_STORAGE_M3"]
-    )
-    plant_params["PUMP_RATE_M3H"] = (
-        plant_params["TURBINE_RATE_M3H"] * plant_params["EFFICIENCY"]
-    )
-    plant_params["MAX_STORAGE_MWH"] = (
-        plant_params["MAX_STORAGE_M3"] / plant_params["TURBINE_RATE_M3H"]
-    ) * plant_params["TURBINE_POWER_MW"]
 
-    ga = GA_Actions(df["spot"], df["utc_time"], plant_params, indiviual_size=df.shape[0])
-    # best_ind, best_fitness, history = ga.train(
-    #     config={
-    #         "CXPB": 0.8,
-    #         "MUTPB": 0.2,
-    #         "MUT_IND_PB": 0.2,
-    #         "TOURNAMENT_SIZE": 3,
-    #         "POP_SIZE": 100,
-    #     },
-    #     total_generations=100,
-    #     tune_mode=False
-    # )
 
-    analysis = ga.tune(tune_runs=10, total_generations=30)
+# if __name__ == "__main__":
+#     df = pd.read_csv(r"C:\Users\mathi\OneDrive\Universitaet\2nd Semester\5_Supervised Research\genetic-algorithm-pumped-hydropower\01 - Data\example_week.csv")
 
-    print(f"Tuning History: {analysis.trial_dataframes}")
-    print(f"Best config: {analysis.best_config}")
+#     plant_params = {
+#         "EFFICIENCY": 0.75,
+#         "MAX_STORAGE_M3": 5000,
+#         "MIN_STORAGE_M3": 0,
+#         "TURBINE_POWER_MW": 100,
+#         "PUMP_POWER_MW": 100,
+#         "TURBINE_RATE_M3H": 500,
+#         "MIN_STORAGE_MWH": 0,
+#         "INITIAL_WATER_LEVEL_PCT": 0,
+#     }
+#     plant_params["INITIAL_WATER_LEVEL"] = (
+#         plant_params["INITIAL_WATER_LEVEL_PCT"] * plant_params["MAX_STORAGE_M3"]
+#     )
+#     plant_params["PUMP_RATE_M3H"] = (
+#         plant_params["TURBINE_RATE_M3H"] * plant_params["EFFICIENCY"]
+#     )
+#     plant_params["MAX_STORAGE_MWH"] = (
+#         plant_params["MAX_STORAGE_M3"] / plant_params["TURBINE_RATE_M3H"]
+#     ) * plant_params["TURBINE_POWER_MW"]
+
+#     ga_actions_solver = GA_Actions(spot=df["spot"], utc_time=df["utc_time"], plant_params=plant_params)
+#     analysis = ga_actions_solver.tune(total_generations=100, timeout_s=60)
+#     print(analysis.best_config)
