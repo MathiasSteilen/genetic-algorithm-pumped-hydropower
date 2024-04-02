@@ -63,14 +63,14 @@ class GA_Actions_Tournament:
             # Non linear mutation rate decay
             indpb=CallbackProxy(
                 lambda: np.where(
-                    generation <= int(0.8 * total_generations),
+                    generation <= int(config["INITIAL_EXPLORATION"] * total_generations),
                     config["INITIAL_MUTATION_RATE"]
                     * np.exp(
                         (
                             np.log(config["FINAL_MUTATION_RATE"])
                             - np.log(config["INITIAL_MUTATION_RATE"])
                         )
-                        / (0.8 * total_generations)
+                        / (config["INITIAL_EXPLORATION"] * total_generations)
                     )
                     ** generation,
                     config["FINAL_MUTATION_RATE"],
@@ -151,7 +151,7 @@ class GA_Actions_Tournament:
 
             if tune_mode:
                 # Report average fitness to Ray Tune
-                train.report({"fitness": np.max(fitnesses)})
+                train.report({"fitness": np.mean(fitnesses)})
 
             # Increment counter
             generation += 1
@@ -289,14 +289,14 @@ class GA_Actions_Elite:
             # Non linear mutation rate decay
             indpb=CallbackProxy(
                 lambda: np.where(
-                    generation <= int(0.8 * total_generations),
+                    generation <= int(config["INITIAL_EXPLORATION"] * total_generations),
                     config["INITIAL_MUTATION_RATE"]
                     * np.exp(
                         (
                             np.log(config["FINAL_MUTATION_RATE"])
                             - np.log(config["INITIAL_MUTATION_RATE"])
                         )
-                        / (0.8 * total_generations)
+                        / (config["INITIAL_EXPLORATION"] * total_generations)
                     )
                     ** generation,
                     config["FINAL_MUTATION_RATE"],
@@ -406,7 +406,7 @@ class GA_Actions_Elite:
 
             if tune_mode:
                 # Report average fitness to Ray Tune
-                train.report({"fitness": np.max(fitnesses)})
+                train.report({"fitness": np.mean(fitnesses)})
 
             # Increment counter
             generation += 1
