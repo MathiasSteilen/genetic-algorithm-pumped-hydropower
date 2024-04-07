@@ -13,6 +13,37 @@ from ray.tune.schedulers import ASHAScheduler
 from pathlib import Path
 import copy
 
+def evaluate_fitness(individual, ps_params, spot_prices):
+
+    water_level = ps_params["INITIAL_WATER_LEVEL"]
+    fitness_score = 0
+
+    for action, price in zip(individual, spot_prices):
+        # Pump (-1)
+        if action == -1:
+            if (
+                water_level + ps_params["PUMP_RATE_M3H"]
+                < ps_params["MAX_STORAGE_M3"]
+            ):
+                fitness_score -= ps_params["PUMP_POWER_MW"] * price
+                water_level += ps_params["PUMP_RATE_M3H"]
+            else:
+                fitness_score -= 100_000
+        # Turbine (1)
+        if action == 1:
+            if (
+                water_level - ps_params["TURBINE_RATE_M3H"]
+                > ps_params["MIN_STORAGE_M3"]
+            ):
+                fitness_score += ps_params["TURBINE_POWER_MW"] * price
+                water_level -= ps_params["TURBINE_RATE_M3H"]
+            else:
+                fitness_score -= 100_000
+        # Do nothing (0)
+        # Nothing happens to the fitness score and the water level
+
+    return fitness_score
+
 
 class GA_Actions_Tournament:
     def __init__(self, plant_params, spot, utc_time):
@@ -202,42 +233,8 @@ class GA_Actions_Tournament:
         return analysis
 
     def _evaluate_fitness(self, individual):
-
-        # Calculate revenues from actions
-        revenues = np.select(
-            condlist=[
-                np.array(individual) == -1,
-                np.array(individual) == 1,
-            ],
-            choicelist=[
-                -self.plant_params["PUMP_POWER_MW"] * self.spot,
-                self.plant_params["TURBINE_POWER_MW"] * self.spot,
-            ],
-            default=0,
-        )
-
-        # Calculate water level exceedances
-        water_levels = np.select(
-            condlist=[
-                np.array(individual) == -1,
-                np.array(individual) == 1,
-            ],
-            choicelist=[
-                self.plant_params["PUMP_RATE_M3H"],
-                -self.plant_params["TURBINE_RATE_M3H"],
-            ],
-            default=0,
-        ).cumsum()
-
-        exceedances = (
-            (water_levels >= self.plant_params["MAX_STORAGE_M3"])
-            | (water_levels <= self.plant_params["MIN_STORAGE_M3"])
-        ).sum()
-
-        if exceedances > 0:
-            return (revenues.sum() - 1e7,)
-        else:
-            return (revenues.sum(),)
+        fitness = evaluate_fitness(individual, self.plant_params, self.spot)
+        return (fitness,)
 
 
 class GA_Actions_Elite:
@@ -457,42 +454,8 @@ class GA_Actions_Elite:
         return analysis
 
     def _evaluate_fitness(self, individual):
-
-        # Calculate revenues from actions
-        revenues = np.select(
-            condlist=[
-                np.array(individual) == -1,
-                np.array(individual) == 1,
-            ],
-            choicelist=[
-                -self.plant_params["PUMP_POWER_MW"] * self.spot,
-                self.plant_params["TURBINE_POWER_MW"] * self.spot,
-            ],
-            default=0,
-        )
-
-        # Calculate water level exceedances
-        water_levels = np.select(
-            condlist=[
-                np.array(individual) == -1,
-                np.array(individual) == 1,
-            ],
-            choicelist=[
-                self.plant_params["PUMP_RATE_M3H"],
-                -self.plant_params["TURBINE_RATE_M3H"],
-            ],
-            default=0,
-        ).cumsum()
-
-        exceedances = (
-            (water_levels >= self.plant_params["MAX_STORAGE_M3"])
-            | (water_levels <= self.plant_params["MIN_STORAGE_M3"])
-        ).sum()
-
-        if exceedances > 0:
-            return (revenues.sum() - 1e7,)
-        else:
-            return (revenues.sum(),)
+        fitness = evaluate_fitness(individual, self.plant_params, self.spot)
+        return (fitness,)
 
 
 # if __name__ == "__main__":
