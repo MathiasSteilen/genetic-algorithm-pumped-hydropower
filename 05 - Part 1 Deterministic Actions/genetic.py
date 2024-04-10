@@ -171,7 +171,7 @@ class GA_Actions_Tournament:
 
                 # Update progress bar
                 pbar.set_description(
-                    f"Generation: {generation}\nBest: {best_fitnesses[-1]}\nAverage: {avg_fitnesses[-1]}",
+                    f"Generation: {generation}\nBest: {best_fitnesses[-1]:.2f}\nAverage: {avg_fitnesses[-1]:.2f}",
                     refresh=True,
                 )
 
@@ -392,7 +392,7 @@ class GA_Actions_Elite:
 
                 # Update progress bar
                 pbar.set_description(
-                    f"Generation: {generation}\nBest: {best_fitnesses[-1]}\nAverage: {avg_fitnesses[-1]}",
+                    f"Generation: {generation}\nBest: {best_fitnesses[-1]:.2f}\nAverage: {avg_fitnesses[-1]:.2f}",
                     refresh=True,
                 )
 
