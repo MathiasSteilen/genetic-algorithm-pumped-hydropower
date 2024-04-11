@@ -180,9 +180,11 @@ class GA_Actions_Tournament:
                     best_fitness = np.max(fitnesses)
                     best_ind = population[fitnesses.index(np.max(fitnesses))]
 
+
             if tune_mode:
-                # Report average fitness to Ray Tune
-                train.report({"fitness": np.mean(fitnesses)})
+                sorted_fitnesses = sorted(fitnesses)
+                start_index = int(len(sorted_fitnesses) * 0.8)
+                train.report({"fitness": np.mean(sorted_fitnesses[start_index:])})
 
             # Increment counter
             generation += 1
@@ -402,8 +404,9 @@ class GA_Actions_Elite:
                     best_ind = population[fitnesses.index(np.max(fitnesses))]
 
             if tune_mode:
-                # Report average fitness to Ray Tune
-                train.report({"fitness": np.mean(fitnesses)})
+                sorted_fitnesses = sorted(fitnesses)
+                start_index = int(len(sorted_fitnesses) * 0.8)
+                train.report({"fitness": np.mean(sorted_fitnesses[start_index:])})
 
             # Increment counter
             generation += 1
