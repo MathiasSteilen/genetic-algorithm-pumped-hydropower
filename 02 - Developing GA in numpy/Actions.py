@@ -56,10 +56,11 @@ class GA_discrete_actions:
         # Calculate weighting for elite
         min_fitness = sorted_elite_fitnesses.min()
         max_fitness = sorted_elite_fitnesses.max()
+
         if min_fitness == max_fitness:
             # If all fitnesses are equal, set weighting to uniform distribution
             fitnesses_weighting = np.full_like(
-                sorted_elite_fitnesses, 1 / len(sorted_elite_fitnesses)
+                sorted_elite_fitnesses, 1 / len(sorted_elite_fitnesses), dtype=np.float32
             )
         else:
             fitnesses_weighting = (sorted_elite_fitnesses - min_fitness) / (
@@ -69,11 +70,11 @@ class GA_discrete_actions:
 
         new_population = np.zeros((self.population_size, self.dna_size))
 
-        # Keep the elite according to survival rate
+        # Keep the population according to survival rate
         survival_cutoff = int(np.floor(self.survival_rate * self.population_size))
         new_population[0:survival_cutoff] = sorted_population[-survival_cutoff:]
 
-        # Crossover the rest
+        # Crossover the elite only, rest of population doesn't cross over
         for child_id in np.arange(survival_cutoff + 1, self.population_size):
             i0 = np.random.choice(
                 a=self.elite_size, p=fitnesses_weighting, replace=True
@@ -169,56 +170,3 @@ def evaluate_fitness(population, ps_params, prices):
         fitness_scores = np.append(fitness_scores, fitness_score)
 
     return fitness_scores
-
-
-if __name__ == "__main__":
-    prices = (
-        pl.read_csv(
-            r"C:\Users\mathi\OneDrive\Python\Pumped Storage\Genetic Algorithms\Data\spot_prices_utc.csv"
-        )
-        .with_columns(
-            pl.col("utc_time").str.to_datetime(), pl.col("spot").forward_fill()
-        )
-        .drop_nulls()
-    )
-
-    example = prices.filter(
-        pl.col("utc_time") >= pd.to_datetime("2022-07-18").tz_localize("UTC")
-    ).filter(pl.col("utc_time") < pd.to_datetime("2022-07-19").tz_localize("UTC"))
-
-    ps_params = {
-        "EFFICIENCY": 0.75,
-        "MAX_STORAGE_M3": 1000,
-        "MIN_STORAGE_M3": 0,
-        "TURBINE_POWER_MW": 100,
-        "PUMP_POWER_MW": 100,
-        "TURBINE_RATE_M3H": 100,
-        "MIN_STORAGE_MWH": 0,
-    }
-    ps_params["INITIAL_WATER_LEVEL"] = 0.5 * ps_params["MAX_STORAGE_M3"]
-    ps_params["PUMP_RATE_M3H"] = ps_params["TURBINE_RATE_M3H"] * ps_params["EFFICIENCY"]
-    ps_params["MAX_STORAGE_MWH"] = (
-        ps_params["MAX_STORAGE_M3"] / ps_params["TURBINE_RATE_M3H"]
-    ) * ps_params["TURBINE_POWER_MW"]
-
-    ga = GA_discrete_actions(
-        dna_size=24,
-        discrete_action_space=[-1, 0, 1],
-        elitism=0.33,
-        population_size=200,
-        mutation_rate=0.05,
-        survival_rate=0.25,
-        mutation_decay=0.9999,
-        mutation_limit=0.01,
-    )
-
-    population = ga.initial_population
-
-    for generation in range(100):
-        population = ga.evolve(
-            population=population,
-            fitnesses=evaluate_fitness(
-                population=population, ps_params=ps_params, prices=example
-            ),
-        )
-        print(ga.average_fitness)

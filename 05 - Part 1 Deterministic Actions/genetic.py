@@ -459,31 +459,3 @@ class GA_Actions_Elite:
     def _evaluate_fitness(self, individual):
         fitness = evaluate_fitness(individual, self.plant_params, self.spot)
         return (fitness,)
-
-
-# if __name__ == "__main__":
-#     df = pd.read_csv(r"C:\Users\mathi\OneDrive\Universitaet\2nd Semester\5_Supervised Research\genetic-algorithm-pumped-hydropower\01 - Data\example_week.csv")
-
-#     plant_params = {
-#         "EFFICIENCY": 0.75,
-#         "MAX_STORAGE_M3": 5000,
-#         "MIN_STORAGE_M3": 0,
-#         "TURBINE_POWER_MW": 100,
-#         "PUMP_POWER_MW": 100,
-#         "TURBINE_RATE_M3H": 500,
-#         "MIN_STORAGE_MWH": 0,
-#         "INITIAL_WATER_LEVEL_PCT": 0,
-#     }
-#     plant_params["INITIAL_WATER_LEVEL"] = (
-#         plant_params["INITIAL_WATER_LEVEL_PCT"] * plant_params["MAX_STORAGE_M3"]
-#     )
-#     plant_params["PUMP_RATE_M3H"] = (
-#         plant_params["TURBINE_RATE_M3H"] * plant_params["EFFICIENCY"]
-#     )
-#     plant_params["MAX_STORAGE_MWH"] = (
-#         plant_params["MAX_STORAGE_M3"] / plant_params["TURBINE_RATE_M3H"]
-#     ) * plant_params["TURBINE_POWER_MW"]
-
-#     ga_actions_solver = GA_Actions(spot=df["spot"], utc_time=df["utc_time"], plant_params=plant_params)
-#     analysis = ga_actions_solver.tune(total_generations=100, timeout_s=60)
-#     print(analysis.best_config)
