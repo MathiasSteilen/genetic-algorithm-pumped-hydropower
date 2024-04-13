@@ -99,8 +99,7 @@ class GA_discrete_actions:
             # Mutate the new population
             for dna_id in range(config["POP_SIZE"]):
                 if np.random.random_sample() < self.mutation_rate:
-
-                    # Randomly select which element to mutate and insert random integer parameters
+                    # Randomly select which element to mutate and insert random integers
                     mutation_values = np.random.choice(a=self.action_space, size=1)
                     positions = np.random.choice(a=np.arange(0, len(new_population[dna_id])), size=1)
 
