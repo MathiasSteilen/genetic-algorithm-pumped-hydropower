@@ -1,140 +1,21 @@
 import pandas as pd
-import polars as pl
-import polars.selectors as cs
 import numpy as np
 from tqdm.notebook import tqdm
-import os
-from deap import base, creator, tools, algorithms
-from objproxies import CallbackProxy
 import ray
 from ray import train, tune
 from ray.tune.search.optuna import OptunaSearch
 from ray.tune.schedulers import ASHAScheduler
-from pathlib import Path
-import copy
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
-import torch.optim as optim
 
 
-class ANN(nn.Module):
-    def __init__(self, input_size, output_size, hidden_layers, hidden_size):
-        super(ANN, self).__init__()
-        self.input_size = input_size
-        self.output_size = output_size
-        self.hidden_layers = hidden_layers
-        self.hidden_size = hidden_size
+class GA_discrete_actions:
 
-        # Define input layer
-        self.input_layer = nn.Linear(input_size, hidden_size)
+    def __init__(self, plant_params, spot, utc_time, actions_space):
 
-        # Define hidden layers
-        self.hidden_layers = nn.ModuleList()
-        for _ in range(hidden_layers):
-            self.hidden_layers.append(nn.Linear(hidden_size, hidden_size))
-
-        # Define output layer
-        self.output_layer = nn.Linear(hidden_size, output_size)
-
-    def forward(self, x):
-        x = torch.relu(self.input_layer(x))
-        for layer in self.hidden_layers:
-            x = torch.relu(layer(x))
-        x = torch.sigmoid(self.output_layer(x))
-        return x
-
-
-def encode_chromosome(model):
-    """
-    Encodes the model parameters into a single chromosome, which can be used for genetic algorithms.
-    """
-    chromosome = torch.tensor([])
-
-    for param in model.parameters():
-        chromosome = torch.cat((chromosome, param.view(-1)))
-
-    return chromosome
-
-
-def decode_chromosome(model, chromosome):
-    """
-    Decodes the chromosome into the model parameters and updates the model with the new parameters.
-    """
-    chromosome = torch.tensor(chromosome)
-    model_params = list(model.parameters())
-    start = 0
-
-    for param in model_params:
-        end = start + torch.numel(param)
-        param.data = chromosome[start:end].view(param.size())
-        start = end
-
-
-def evaluate_fitness(population, ps_params, spot_prices):
-
-    fitnesses = []
-
-    for individual in population:
-
-        water_level = ps_params["INITIAL_WATER_LEVEL"]
-        fitness_score = 0
-
-        for sigmoid_value, price in zip(individual, spot_prices):
-            # Pump (-1)
-            if sigmoid_value < 0.33:
-                if water_level + ps_params["PUMP_RATE_M3H"] < ps_params["MAX_STORAGE_M3"]:
-                    fitness_score -= ps_params["PUMP_POWER_MW"] * price
-                    water_level += ps_params["PUMP_RATE_M3H"]
-                else:
-                    fitness_score -= 100_000
-            # Turbine (1)
-            if sigmoid_value > 0.66:
-                if (
-                    water_level - ps_params["TURBINE_RATE_M3H"]
-                    > ps_params["MIN_STORAGE_M3"]
-                ):
-                    fitness_score += ps_params["TURBINE_POWER_MW"] * price
-                    water_level -= ps_params["TURBINE_RATE_M3H"]
-                else:
-                    fitness_score -= 100_000
-            # Do nothing (0)
-            # Nothing happens to the fitness score and the water level
-        
-        fitnesses.append(fitness_score)
-
-    return fitnesses
-
-
-class GA_ANN:
-    def __init__(
-        self,
-        plant_params,
-        spot,
-        utc_time,
-        input_size,
-        output_size,
-        hidden_layers,
-        hidden_size,
-    ):
         self.plant_params = plant_params
         self.spot = spot
         self.utc_time = utc_time
         self.individual_size = len(spot)
-
-        # Neural Network
-        self.input_size = input_size
-        self.output_size = output_size
-        self.hidden_layers = hidden_layers
-        self.hidden_size = hidden_size
-
-        self.model = ANN(
-            input_size=self.input_size,
-            output_size=self.output_size,
-            hidden_layers=self.hidden_layers,
-            hidden_size=self.hidden_size,
-        )
+        self.action_space = actions_space
 
     def train(self, config, total_generations, tune_mode: bool):
         
@@ -309,3 +190,42 @@ class GA_ANN:
         )
 
         return analysis
+
+
+def evaluate_fitness(population, ps_params, prices):
+
+    # To be written according to pumped storage optimisation problem
+    fitness_scores = np.array([])
+
+    for parameter_combination in population:
+
+        water_level = ps_params["INITIAL_WATER_LEVEL"]
+        fitness_score = 0
+
+        for action, price in zip(parameter_combination, prices):
+            # Pump (1)
+            if action == 1:
+                if (
+                    water_level + ps_params["PUMP_RATE_M3H"]
+                    < ps_params["MAX_STORAGE_M3"]
+                ):
+                    fitness_score -= ps_params["PUMP_POWER_MW"] * price
+                    water_level += ps_params["PUMP_RATE_M3H"]
+                else:
+                    fitness_score -= 100_000
+            # Turbine (-1)
+            if action == -1:
+                if (
+                    water_level - ps_params["TURBINE_RATE_M3H"]
+                    > ps_params["MIN_STORAGE_M3"]
+                ):
+                    fitness_score += ps_params["TURBINE_POWER_MW"] * price
+                    water_level -= ps_params["TURBINE_RATE_M3H"]
+                else:
+                    fitness_score -= 100_000
+            # Do nothing (0)
+            # Nothing happens to the fitness score and the water level
+
+        fitness_scores = np.append(fitness_scores, fitness_score)
+
+    return fitness_scores
