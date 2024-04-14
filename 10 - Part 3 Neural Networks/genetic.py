@@ -55,14 +55,14 @@ def encode_chromosome(model):
     for param in model.parameters():
         chromosome = torch.cat((chromosome, param.view(-1)))
 
-    return chromosome
+    return chromosome.numpy()
 
 
 def decode_chromosome(model, chromosome):
     """
     Decodes the chromosome into the model parameters and updates the model with the new parameters.
     """
-    chromosome = torch.tensor(chromosome)
+    chromosome = torch.tensor(chromosome, dtype=torch.float32)
     model_params = list(model.parameters())
     start = 0
 
@@ -84,7 +84,10 @@ def evaluate_fitness(population, ps_params, spot_prices):
         for sigmoid_value, price in zip(individual, spot_prices):
             # Pump (-1)
             if sigmoid_value < 0.33:
-                if water_level + ps_params["PUMP_RATE_M3H"] < ps_params["MAX_STORAGE_M3"]:
+                if (
+                    water_level + ps_params["PUMP_RATE_M3H"]
+                    < ps_params["MAX_STORAGE_M3"]
+                ):
                     fitness_score -= ps_params["PUMP_POWER_MW"] * price
                     water_level += ps_params["PUMP_RATE_M3H"]
                 else:
@@ -101,10 +104,10 @@ def evaluate_fitness(population, ps_params, spot_prices):
                     fitness_score -= 100_000
             # Do nothing (0)
             # Nothing happens to the fitness score and the water level
-        
+
         fitnesses.append(fitness_score)
 
-    return fitnesses
+    return np.array(fitnesses)
 
 
 class GA_ANN:
@@ -112,23 +115,25 @@ class GA_ANN:
         self,
         plant_params,
         spot,
-        utc_time,
-        input_size,
-        output_size,
         hidden_layers,
         hidden_size,
     ):
         self.plant_params = plant_params
         self.spot = spot
-        self.utc_time = utc_time
-        self.individual_size = len(spot)
+        self.input_data = torch.cat(
+            [
+                torch.tensor([self.plant_params["INITIAL_WATER_LEVEL"]]),
+                torch.tensor(self.spot),
+            ]
+        )
 
-        # Neural Network
-        self.input_size = input_size
-        self.output_size = output_size
+        # Neural Network parameters
+        self.input_size = len(self.input_data)
+        self.output_size = len(self.spot)
         self.hidden_layers = hidden_layers
         self.hidden_size = hidden_size
 
+        # Initialise the model
         self.model = ANN(
             input_size=self.input_size,
             output_size=self.output_size,
@@ -136,12 +141,20 @@ class GA_ANN:
             hidden_size=self.hidden_size,
         )
 
-    def train(self, config, total_generations, tune_mode: bool):
-        
+        # Need to disable gradients
+        for param in self.model.parameters():
+            param.requires_grad = False
+
+        # Individual size
+        self.individual_size = encode_chromosome(self.model).shape[0]
+
+    def train(self, config, tune_mode: bool):
+
         # Initialise random population
-        self.population = np.random.choice(
-            a=self.action_space, size=(config["POP_SIZE"], self.individual_size)
+        self.population = np.random.normal(
+            loc=0, scale=10, size=(config["POP_SIZE"], self.individual_size)
         )
+        self.population = np.array(self.population, dtype=np.float32)
 
         # Initialise elite size according to the hyperparameters
         self.elite_size = int(config["ELITISM"] * config["POP_SIZE"])
@@ -158,11 +171,30 @@ class GA_ANN:
             avg_fitnesses = []
             worst_fitnesses = []
 
-        # Launch the actual evolution loop over total_generations
-        for generation in (pbar := tqdm(range(total_generations), disable=tune_mode)):
-            
+        # Launch the actual evolution loop over TOTAL_GENERATIONS
+        for generation in (
+            pbar := tqdm(range(config["TOTAL_GENERATIONS"]), disable=tune_mode)
+        ):
+
+            # Set the weights of the network and make predictions
+            predictions = np.zeros(
+                (config["POP_SIZE"], self.output_size), dtype=np.float32
+            )
+
+            for idx, individual in enumerate(self.population):
+
+                # Set the model weights
+                decode_chromosome(self.model, individual)
+
+                # Make predictions with the configuration
+                predictions[idx] = self.model(self.input_data).numpy()
+
             # Evaluate the fitness of the population
-            fitnesses = evaluate_fitness(self.population, self.plant_params, self.spot)
+            fitnesses = evaluate_fitness(
+                population=predictions,
+                ps_params=self.plant_params,
+                spot_prices=self.spot,
+            )
 
             # Sort population ascendingly
             fitness_indices = fitnesses.argsort()
@@ -218,12 +250,8 @@ class GA_ANN:
             # Mutate the new population
             for dna_id in range(config["POP_SIZE"]):
                 if np.random.random_sample() < self.mutation_rate:
-                    # Randomly select which element to mutate and insert random integers
-                    mutation_values = np.random.choice(a=self.action_space, size=1)
-                    positions = np.random.choice(a=np.arange(0, len(new_population[dna_id])), size=1)
-
-                    new_population[dna_id][positions] = mutation_values
-
+                    # Add Gaussian noise to the entire chromosome
+                    new_population[dna_id] += np.random.normal(loc=0, scale=config["MUTATION_SIGMA"], size=self.individual_size)
 
             # Overwrite the old population with the new one
             self.population = new_population
@@ -231,6 +259,7 @@ class GA_ANN:
             # Append values, show progress
             if not tune_mode:
                 # Append the plot information
+                
                 best_fitnesses.append(np.max(fitnesses))
                 avg_fitnesses.append(np.mean(fitnesses))
                 worst_fitnesses.append(np.min(fitnesses))
@@ -250,14 +279,14 @@ class GA_ANN:
 
             # Decrease mutation rate
             self.mutation_rate = np.where(
-                generation <= int(config["INITIAL_EXPLORATION"] * total_generations),
+                generation <= int(config["INITIAL_EXPLORATION"] * config["TOTAL_GENERATIONS"]),
                 config["INITIAL_MUTATION_RATE"]
                 * np.exp(
                     (
                         np.log(config["FINAL_MUTATION_RATE"])
                         - np.log(config["INITIAL_MUTATION_RATE"])
                     )
-                    / (config["INITIAL_EXPLORATION"] * total_generations)
+                    / (config["INITIAL_EXPLORATION"] * config["TOTAL_GENERATIONS"])
                 )
                 ** generation,
                 config["FINAL_MUTATION_RATE"],
@@ -275,11 +304,9 @@ class GA_ANN:
 
             return self.population, fitnesses, history
 
-
     def tune(
         self,
         tune_config,
-        total_generations,
         timeout_s,
     ):
 
@@ -289,7 +316,6 @@ class GA_ANN:
         analysis = tune.run(
             tune.with_parameters(
                 self.train,
-                total_generations=total_generations,
                 tune_mode=True,
             ),
             config=tune_config,
@@ -298,11 +324,6 @@ class GA_ANN:
             local_dir="tune_results",
             name="GA",
             search_alg=OptunaSearch(),
-            # scheduler=ASHAScheduler(
-            #     time_attr="training_iteration",
-            #     grace_period=int(total_generations / 2),
-            #     reduction_factor=1.5,
-            # ),
             time_budget_s=timeout_s,
             num_samples=-1,
             trial_dirname_creator=lambda trial: f"{trial.trainable_name}_{trial.trial_id}",
